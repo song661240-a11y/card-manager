@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>信用卡管家 (單卡結算版)</title>
+    <title>信用卡管家 (最終版)</title>
 
     <!-- ▼▼▼ App 圖示與 PWA 設定 ▼▼▼ -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%232563eb%22 rx=%2220%22></rect><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22central%22 text-anchor=%22middle%22 font-size=%2270%22>💳</text></svg>">
@@ -44,7 +44,7 @@
     <script type="text/babel" data-type="module">
         import React, { useState, useEffect } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { Plus, Minus, Trash2, Edit2, RotateCcw, CreditCard, DollarSign, TrendingUp, AlertCircle, X, Tag, Cloud, RefreshCw, Calculator, ChevronDown, ChevronUp, Layers, History, Calendar, ArrowLeft, Key, LogIn, LogOut, CheckCircle, Save, AlertTriangle, Bell, ArrowUp, ArrowDown, Eye, EyeOff, FileCheck } from 'lucide-react';
+        import { Plus, Minus, Trash2, Edit2, RotateCcw, CreditCard, DollarSign, TrendingUp, AlertCircle, X, Tag, Cloud, RefreshCw, Calculator, ChevronDown, ChevronUp, Layers, History, Calendar, ArrowLeft, Key, LogIn, LogOut, CheckCircle, Save, AlertTriangle, Bell, ArrowUp, ArrowDown, FileCheck, CalendarClock, RefreshCcw } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
         import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
         import { getFirestore, doc, setDoc, deleteDoc, updateDoc, getDoc, onSnapshot, collection, query, orderBy, serverTimestamp } from 'firebase/firestore';
@@ -75,8 +75,22 @@
                 ],
                 currentSpend: 0,
                 billingDay: 25, 
+                cycleType: 'month', // 'month' or 'billing'
                 color: "bg-red-500",
                 tags: ["加油", "高鐵", "Apple Pay"]
+            },
+            {
+                id: 2,
+                name: "永豐大戶 (指定通路)",
+                rewards: [
+                    { name: "任務加碼", rate: 1, cap: 30000 },
+                    { name: "指定通路", rate: 5, cap: 6000 }
+                ],
+                currentSpend: 0,
+                billingDay: 20, 
+                cycleType: 'billing', // 這是週期卡
+                color: "bg-gray-800",
+                tags: ["超商", "電影"]
             }
         ];
 
@@ -94,13 +108,12 @@
             const [user, setUser] = useState(null);
             const [syncId, setSyncId] = useState(() => localStorage.getItem('card_manager_sync_id') || '');
             const [tempSyncId, setTempSyncId] = useState(''); 
-            const [showPassword, setShowPassword] = useState(false);
 
             const [cards, setCards] = useState([]);
             const [history, setHistory] = useState([]);
             const [loading, setLoading] = useState(true);
             const [isSyncing, setIsSyncing] = useState(false);
-            const [view, setView] = useState('dashboard');
+            const [view, setView] = useState('dashboard'); 
 
             // UI States
             const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -112,7 +125,7 @@
             const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
             const [currentEditingCard, setCurrentEditingCard] = useState(null);
-            const [settleTargetCard, setSettleTargetCard] = useState(null); // 新增：準備結算的單張卡片
+            const [settleTargetCard, setSettleTargetCard] = useState(null);
             
             // History Edit State
             const [editingHistoryId, setEditingHistoryId] = useState(null);
@@ -130,6 +143,8 @@
             const [formRewards, setFormRewards] = useState([]);
             const [formCurrentSpend, setFormCurrentSpend] = useState("");
             const [formBillingDay, setFormBillingDay] = useState("");
+            const [formPaymentDay, setFormPaymentDay] = useState(""); 
+            const [formCycleType, setFormCycleType] = useState("month"); 
 
             const [historyFormSpend, setHistoryFormSpend] = useState("");
             const [historyFormReward, setHistoryFormReward] = useState("");
@@ -172,6 +187,18 @@
                 setTimeout(() => setToast(prev => ({ ...prev, show: false })), 3000);
             };
 
+            const copyToClipboard = (text) => {
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                textArea.style.position = "fixed"; textArea.style.top = "0"; textArea.style.left = "0";
+                document.body.appendChild(textArea); textArea.focus(); textArea.select();
+                try {
+                    const successful = document.execCommand('copy');
+                    if (successful) showToast('密碼已複製'); else showToast('複製失敗', 'error');
+                } catch (err) { showToast('複製失敗', 'error'); }
+                document.body.removeChild(textArea);
+            };
+
             const handleLogin = (e) => { e.preventDefault(); if (!tempSyncId.trim()) return showToast("請輸入連動密碼", 'error'); setSyncId(tempSyncId.trim()); localStorage.setItem('card_manager_sync_id', tempSyncId.trim()); };
             const handleLogout = () => { if(confirm("確定要登出嗎？")) { setSyncId(''); localStorage.removeItem('card_manager_sync_id'); setCards([]); }};
 
@@ -205,37 +232,25 @@
                 let daysLeft = day - currentDay; if (daysLeft < 0) daysLeft += 30; return daysLeft;
             };
 
-            // --- 單卡結算邏輯 (重點更新) ---
-            const openSingleSettleModal = (card) => {
-                setSettleTargetCard(card);
-                setIsSettleModalOpen(true); // 重用結算視窗，但會根據是否有 targetCard 改變內容
-            };
+            // --- 結算邏輯 ---
+            const openSingleSettleModal = (card) => { setSettleTargetCard(card); setIsSettleModalOpen(true); };
+            const openGlobalSettleModal = () => { setSettleTargetCard(null); setIsSettleModalOpen(true); };
 
             const handleConfirmSettle = async () => {
                 const currentMonthStr = new Date().toISOString().slice(0, 7);
                 setIsSyncing(true);
-                
                 try {
-                    // 1. 取得當前月份的歷史紀錄 (如果有的話)
                     const historyDocRef = doc(collection(db, 'users', syncId, 'history'), currentMonthStr);
                     const historyDocSnap = await getDoc(historyDocRef);
-                    
                     let existingData = { totalSpend: 0, totalReward: 0, cardsSnapshot: [] };
-                    if (historyDocSnap.exists()) {
-                        existingData = historyDocSnap.data();
-                    }
+                    if (historyDocSnap.exists()) { existingData = historyDocSnap.data(); }
 
-                    // 2. 準備要結算的資料
                     let cardsToSettle = [];
-                    if (settleTargetCard) {
-                        // 單卡結算模式
-                        cardsToSettle = [settleTargetCard];
-                    } else {
-                        // 全局結算模式 (全部有消費的卡)
-                        cardsToSettle = cards.filter(c => c.currentSpend > 0);
-                    }
+                    if (settleTargetCard) { cardsToSettle = [settleTargetCard]; } 
+                    else { cardsToSettle = cards.filter(c => c.currentSpend > 0 && (c.cycleType === 'month' || !c.cycleType)); }
 
-                    // 3. 計算並合併資料 (累加模式)
+                    if (cardsToSettle.length === 0) { showToast("沒有需要結算的月制卡片", 'error'); setIsSettleModalOpen(false); setIsSyncing(false); return; }
+
                     let newTotalSpend = existingData.totalSpend;
                     let newTotalReward = existingData.totalReward;
                     let newSnapshot = [...(existingData.cardsSnapshot || [])];
@@ -244,62 +259,41 @@
                         const rewardData = calculateReward(card);
                         const cardSpend = parseFloat(card.currentSpend);
                         const cardReward = rewardData.total;
-
                         newTotalSpend += cardSpend;
                         newTotalReward += cardReward;
 
-                        // 檢查歷史紀錄中是否已有這張卡，有的話累加，沒有的話新增
-                        const existingCardIndex = newSnapshot.findIndex(c => c.name === card.name); // 簡單用名稱對應
-                        if (existingCardIndex >= 0) {
-                            newSnapshot[existingCardIndex].spend += cardSpend;
-                            newSnapshot[existingCardIndex].reward += cardReward;
-                        } else {
-                            newSnapshot.push({
-                                name: card.name,
-                                color: card.color,
-                                spend: cardSpend,
-                                reward: cardReward
-                            });
-                        }
+                        const existingCardIndex = newSnapshot.findIndex(c => c.name === card.name); 
+                        if (existingCardIndex >= 0) { newSnapshot[existingCardIndex].spend += cardSpend; newSnapshot[existingCardIndex].reward += cardReward; } 
+                        else { newSnapshot.push({ name: card.name, color: card.color, spend: cardSpend, reward: cardReward }); }
                     });
 
-                    // 4. 寫入歷史
-                    const historyEntry = {
-                        monthStr: currentMonthStr,
-                        totalSpend: newTotalSpend,
-                        totalReward: newTotalReward,
-                        timestamp: new Date().toISOString(),
-                        cardsSnapshot: newSnapshot
-                    };
-                    await setDoc(historyDocRef, historyEntry);
+                    await setDoc(historyDocRef, {
+                        monthStr: currentMonthStr, totalSpend: newTotalSpend, totalReward: newTotalReward, timestamp: new Date().toISOString(), cardsSnapshot: newSnapshot
+                    });
 
-                    // 5. 歸零卡片
                     let updatedCards = [...cards];
-                    if (settleTargetCard) {
-                        // 只歸零這一張
-                        updatedCards = cards.map(c => c.id === settleTargetCard.id ? { ...c, currentSpend: 0 } : c);
-                    } else {
-                        // 全部歸零
-                        updatedCards = cards.map(c => ({ ...c, currentSpend: 0 }));
-                    }
+                    if (settleTargetCard) { updatedCards = cards.map(c => c.id === settleTargetCard.id ? { ...c, currentSpend: 0 } : c); } 
+                    else { updatedCards = cards.map(c => (c.cycleType === 'month' || !c.cycleType) ? { ...c, currentSpend: 0 } : c); }
                     
-                    setCards(updatedCards); 
-                    await updateCardsData(updatedCards);
+                    setCards(updatedCards); await updateCardsData(updatedCards);
                     
-                    setIsSettleModalOpen(false);
-                    setSettleTargetCard(null);
-                    showToast(settleTargetCard ? `${settleTargetCard.name} 已結算！` : "全月結算成功！");
-
-                } catch (e) { 
-                    console.error("Settle error:", e);
-                    showToast(`結算失敗：${e.message}`, 'error'); 
-                } finally { 
-                    setIsSyncing(false); 
-                }
+                    setIsSettleModalOpen(false); showToast(settleTargetCard ? `${settleTargetCard.name} 已結算！` : "日曆月卡片已全結算！"); setSettleTargetCard(null);
+                } catch (e) { console.error("Settle error:", e); showToast(`結算失敗：${e.message}`, 'error'); } finally { setIsSyncing(false); }
             };
 
             const getYearlySummary = () => { const s = {}; history.forEach(i => { const y = i.monthStr.slice(0, 4); if (!s[y]) s[y] = { spend: 0, reward: 0 }; s[y].spend += i.totalSpend; s[y].reward += i.totalReward; }); return Object.entries(s).sort((a, b) => b[0] - a[0]); };
-            const handleSaveCard = () => { if (!formName) return showToast("請輸入名稱", 'error'); const cleanRewards = formRewards.filter(r => r.name && r.rate).map(r => ({ name: r.name, rate: parseFloat(r.rate), cap: parseFloat(r.cap) || 0 })); const newCardData = { id: currentEditingCard ? currentEditingCard.id : Date.now(), name: formName, rewards: cleanRewards, color: formColor, tags: formTags, currentSpend: parseFloat(formCurrentSpend) || 0, billingDay: parseInt(formBillingDay) || 0 }; saveCardsToCloud(currentEditingCard ? cards.map(c => c.id === currentEditingCard.id ? newCardData : c) : [...cards, newCardData]); closeEditModal(); showToast("卡片已儲存"); };
+            const handleSaveCard = () => { 
+                if (!formName) return showToast("請輸入名稱", 'error'); 
+                const cleanRewards = formRewards.filter(r => r.name && r.rate).map(r => ({ name: r.name, rate: parseFloat(r.rate), cap: parseFloat(r.cap) || 0 })); 
+                const newCardData = { 
+                    id: currentEditingCard ? currentEditingCard.id : Date.now(), 
+                    name: formName, rewards: cleanRewards, color: formColor, tags: formTags, 
+                    currentSpend: parseFloat(formCurrentSpend) || 0, 
+                    billingDay: parseInt(formBillingDay) || 0, paymentDay: parseInt(formPaymentDay) || 0, cycleType: formCycleType 
+                }; 
+                saveCardsToCloud(currentEditingCard ? cards.map(c => c.id === currentEditingCard.id ? newCardData : c) : [...cards, newCardData]); 
+                closeEditModal(); showToast("卡片已儲存"); 
+            };
             const handleDeleteCard = (id) => { if(confirm("確定要刪除這張卡片嗎？")) { saveCardsToCloud(cards.filter(c => c.id !== id)); closeEditModal(); showToast("卡片已刪除"); }};
             const handleAddSpend = () => { const amt = parseFloat(spendAmount); if (isNaN(amt) || !currentEditingCard) return; const finalAmt = isSubtractMode ? -amt : amt; saveCardsToCloud(cards.map(c => c.id === currentEditingCard.id ? { ...c, currentSpend: Math.max(0, c.currentSpend + finalAmt) } : c)); closeSpendModal(); showToast(isSubtractMode ? "金額已扣除" : "記帳成功"); };
             const handleAddTag = () => { if (tagInput && !formTags.includes(tagInput)) { setFormTags([...formTags, tagInput]); setTagInput(""); }};
@@ -311,13 +305,18 @@
                 else if (direction === 'down' && index < cards.length - 1) { [newCards[index + 1], newCards[index]] = [newCards[index], newCards[index + 1]]; } 
                 else { return; } saveCardsToCloud(newCards);
             };
-            const openEditModal = (card = null) => { setCurrentEditingCard(card); setFormName(card?.name||""); setFormColor(card?.color||COLORS[1].value); setFormTags(card?.tags||[]); setFormRewards(card?.rewards || [{ name: '基本回饋', rate: '1', cap: '0' }, { name: '指定加碼', rate: '', cap: '' }]); setFormCurrentSpend(card?.currentSpend || 0); setFormBillingDay(card?.billingDay || ""); setIsEditModalOpen(true); };
+            const openEditModal = (card = null) => { 
+                setCurrentEditingCard(card); setFormName(card?.name||""); setFormColor(card?.color||COLORS[1].value); setFormTags(card?.tags||[]); 
+                setFormRewards(card?.rewards || [{ name: '基本回饋', rate: '1', cap: '0' }, { name: '指定加碼', rate: '', cap: '' }]); 
+                setFormCurrentSpend(card?.currentSpend || 0); setFormBillingDay(card?.billingDay || ""); setFormPaymentDay(card?.paymentDay || "");
+                setFormCycleType(card?.cycleType || "month"); setIsEditModalOpen(true); 
+            };
             const openSpendModal = (card) => { setCurrentEditingCard(card); setSpendAmount(""); setIsSubtractMode(false); setIsSpendModalOpen(true); };
             const closeEditModal = () => setIsEditModalOpen(false);
             const closeSpendModal = () => setIsSpendModalOpen(false);
             const toggleExpand = (cardId) => setExpandedCardId(expandedCardId === cardId ? null : cardId);
 
-            // History & Delete Functions (Same as before)
+            // History & Delete Functions
             const openHistoryEditModal = (item) => { setEditingHistoryId(item.id); setEditingHistoryMonth(item.monthStr); setEditingHistoryCards(JSON.parse(JSON.stringify(item.cardsSnapshot || []))); setIsHistoryEditModalOpen(true); };
             const confirmDeleteHistory = (id) => { setDeleteTargetId(id); setIsDeleteConfirmOpen(true); };
             const executeDeleteHistory = async () => { if (!deleteTargetId) return; setIsSyncing(true); try { await deleteDoc(doc(db, 'users', syncId, 'history', deleteTargetId)); setIsDeleteConfirmOpen(false); setDeleteTargetId(null); showToast("紀錄已刪除"); } catch (e) { showToast("刪除失敗", 'error'); } finally { setIsSyncing(false); } };
@@ -327,8 +326,40 @@
             const editingTotalSpend = editingHistoryCards.reduce((acc, c) => acc + (parseFloat(c.spend) || 0), 0);
             const editingTotalReward = editingHistoryCards.reduce((acc, c) => acc + (parseFloat(c.reward) || 0), 0);
 
-            if (!syncId) return <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6"><div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-sm text-center"><div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"><Key className="w-8 h-8 text-blue-600" /></div><h1 className="text-2xl font-bold text-gray-800 mb-2">輸入連動密碼</h1><p className="text-gray-500 text-sm mb-6">請在不同裝置輸入相同的密碼，即可同步您的記帳資料。</p><form onSubmit={handleLogin} className="space-y-4"><div className="relative"><input type={showPassword ? "text" : "password"} value={tempSyncId} onChange={(e) => setTempSyncId(e.target.value)} placeholder="例如：my-secret-123" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none text-center text-lg bg-gray-50" inputMode="text" /><button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 p-2">{showPassword ? <EyeOff className="w-5 h-5"/> : <Eye className="w-5 h-5"/>}</button></div><button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition active:scale-95 flex items-center justify-center gap-2"><LogIn className="w-5 h-5" /> 開始使用</button></form></div></div>;
+            // --- Schedule Logic ---
+            const getNextDate = (day) => {
+                if (!day) return null;
+                const today = new Date();
+                let targetDate = new Date(today.getFullYear(), today.getMonth(), day);
+                while(targetDate.getMonth() !== today.getMonth()) { targetDate.setDate(targetDate.getDate() - 1); }
+                if (targetDate < today) { targetDate = new Date(today.getFullYear(), today.getMonth() + 1, day); while(targetDate.getMonth() !== (today.getMonth() + 1) % 12) { targetDate.setDate(targetDate.getDate() - 1); } }
+                return targetDate;
+            };
+
+            const getScheduleItems = () => {
+                const items = [];
+                cards.forEach(card => {
+                    const billingDate = getNextDate(card.billingDay);
+                    const paymentDate = getNextDate(card.paymentDay);
+                    const today = new Date();
+                    if (billingDate) { items.push({ id: card.id + '_bill', card, type: 'billing', date: billingDate, daysLeft: Math.ceil((billingDate - today) / (1000 * 60 * 60 * 24)) }); }
+                    if (paymentDate) { items.push({ id: card.id + '_pay', card, type: 'payment', date: paymentDate, daysLeft: Math.ceil((paymentDate - today) / (1000 * 60 * 60 * 24)) }); }
+                });
+                return items.sort((a, b) => a.daysLeft - b.daysLeft);
+            };
+
+            if (!syncId) return <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6"><div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-sm text-center"><div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"><Key className="w-8 h-8 text-blue-600" /></div><h1 className="text-2xl font-bold text-gray-800 mb-2">輸入連動密碼</h1><p className="text-gray-500 text-sm mb-6">請在不同裝置輸入相同的密碼，即可同步您的記帳資料。</p><form onSubmit={handleLogin} className="space-y-4"><div className="relative"><input type="text" value={tempSyncId} onChange={(e) => setTempSyncId(e.target.value)} placeholder="例如：my-secret-123" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none text-center text-lg bg-gray-50" inputMode="text" /></div><button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition active:scale-95 flex items-center justify-center gap-2"><LogIn className="w-5 h-5" /> 開始使用</button></form></div></div>;
             if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400">讀取資料中...</div>;
+
+            if (view === 'schedule') {
+                const scheduleItems = getScheduleItems();
+                return (
+                    <div className="min-h-screen bg-gray-50 pb-20 font-sans text-gray-900">
+                        <div className="bg-white px-6 pt-8 pb-4 rounded-b-3xl shadow-sm sticky top-0 z-20 flex justify-between items-center"><h1 className="text-xl font-bold text-gray-800 flex items-center gap-2"><CalendarClock className="w-6 h-6 text-purple-600" />繳費日程</h1><button onClick={() => setView('dashboard')} className="text-sm flex items-center gap-1 bg-gray-100 px-3 py-1.5 rounded-full text-gray-600 active:scale-95 transition"><ArrowLeft className="w-4 h-4" /> 返回</button></div>
+                        <div className="px-4 py-4 space-y-4">{scheduleItems.length === 0 ? <div className="text-center py-10 text-gray-400"><p>尚未設定結帳日或截止日</p><p className="text-xs mt-2">請去編輯卡片設定日期</p></div> : scheduleItems.map(item => (<div key={item.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 flex items-center justify-between"><div className="flex items-center gap-3"><div className={`w-1.5 h-12 rounded-full ${item.card.color}`}></div><div><div className="font-bold text-gray-800 flex items-center gap-2">{item.card.name} <span className={`text-xs px-2 py-0.5 rounded-full ${item.type === 'payment' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>{item.type === 'payment' ? '繳款' : '結帳'}</span></div><div className="text-sm text-gray-500 mt-0.5">{item.date.getMonth() + 1}/{item.date.getDate()} {item.type === 'payment' ? '截止' : '結算'}</div></div></div><div className="text-right"><div className={`text-xl font-bold ${item.daysLeft <= 3 ? 'text-red-500' : 'text-gray-800'}`}>{item.daysLeft} <span className="text-xs font-normal text-gray-500">天後</span></div>{item.daysLeft <= 3 && <div className="text-xs text-red-500 font-bold flex items-center justify-end gap-1"><AlertCircle className="w-3 h-3"/> 即將到期</div>}</div></div>))}</div>
+                    </div>
+                );
+            }
 
             if (view === 'history') {
                 const yearlySummary = getYearlySummary();
@@ -355,10 +386,14 @@
                 <div className="min-h-screen bg-gray-50 pb-20 font-sans text-gray-900">
                     <div className="bg-white px-6 pt-8 pb-4 rounded-b-3xl shadow-sm sticky top-0 z-20">
                         <div className="flex justify-between items-center mb-4">
-                            <div><h1 className="text-xl font-bold text-gray-800 flex items-center gap-2"><CreditCard className="w-6 h-6 text-blue-600" /> 額度管家 {isSyncing && <RefreshCw className="w-3 h-3 animate-spin text-gray-400"/>}</h1><div className="text-xs text-gray-400 mt-1 ml-8 flex items-center gap-1 cursor-pointer" onClick={() => {navigator.clipboard.writeText(syncId); showToast('密碼已複製');}} title="點擊複製"><Key className="w-3 h-3" /> 密碼: <span className="font-mono bg-gray-100 px-1 rounded"><span className={showPassword ? "" : "blur-sm"}>{showPassword ? syncId : "••••••"}</span></span> <button onClick={(e) => {e.stopPropagation(); setShowPassword(!showPassword);}} className="ml-1 text-gray-400 hover:text-gray-600">{showPassword ? <EyeOff className="w-3 h-3"/> : <Eye className="w-3 h-3"/>}</button></div></div>
-                            <div className="flex gap-2"><button onClick={handleLogout} className="text-gray-400 bg-gray-50 p-2 rounded-full hover:bg-gray-100 transition"><LogOut className="w-5 h-5" /></button><button onClick={() => setView('history')} className="text-gray-500 bg-gray-100 p-2 rounded-full hover:bg-gray-200 transition"><History className="w-5 h-5" /></button>
-                            {/* 全局結算按鈕 (選擇性保留) */}
-                            <button onClick={() => { setSettleTargetCard(null); setIsSettleModalOpen(true); }} className="text-xs bg-gray-100 px-3 py-1.5 rounded-full text-gray-600 flex items-center gap-1 hover:bg-red-50 hover:text-red-500 transition"><RotateCcw className="w-3 h-3" /> 全結</button></div>
+                            <div><h1 className="text-xl font-bold text-gray-800 flex items-center gap-2"><CreditCard className="w-6 h-6 text-blue-600" /> 額度管家 {isSyncing && <RefreshCw className="w-3 h-3 animate-spin text-gray-400"/>}</h1><div className="text-xs text-gray-400 mt-1 ml-8 flex items-center gap-1 cursor-pointer" onClick={() => copyToClipboard(syncId)} title="點擊複製"><Key className="w-3 h-3" /> 密碼: <span className="font-mono bg-gray-100 px-1 rounded">{syncId}</span></div></div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setView('schedule')} className="text-gray-500 bg-gray-100 p-2 rounded-full hover:bg-gray-200 transition" title="繳費日程"><CalendarClock className="w-5 h-5" /></button>
+                                <button onClick={handleLogout} className="text-gray-400 bg-gray-50 p-2 rounded-full hover:bg-gray-100 transition"><LogOut className="w-5 h-5" /></button>
+                                <button onClick={() => setView('history')} className="text-gray-500 bg-gray-100 p-2 rounded-full hover:bg-gray-200 transition"><History className="w-5 h-5" /></button>
+                                {/* 全局結算按鈕: 只能月結算 */}
+                                <button onClick={openGlobalSettleModal} className="text-xs bg-gray-100 px-3 py-1.5 rounded-full text-gray-600 flex items-center gap-1 hover:bg-red-50 hover:text-red-500 transition"><RotateCcw className="w-3 h-3" /> 月結算</button>
+                            </div>
                         </div>
                         <div className="grid grid-cols-2 gap-3 mb-4"><div className="bg-blue-50 p-3 rounded-2xl border border-blue-100"><div className="text-blue-600 text-xs mb-1 font-medium flex items-center gap-1"><DollarSign className="w-3 h-3"/>本月總刷</div><div className="text-xl font-bold text-blue-900">${totalSpend.toLocaleString()}</div></div><div className="bg-green-50 p-3 rounded-2xl border border-green-100"><div className="text-green-600 text-xs mb-1 font-medium flex items-center gap-1"><TrendingUp className="w-3 h-3"/>預估回饋</div><div className="text-xl font-bold text-green-900">${totalReward.toLocaleString()} <span className="text-xs font-normal">({totalRate}%)</span></div></div></div>
                         <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide -mx-2 px-2">{allTags.map(t => <button key={t} onClick={() => setSelectedTag(t)} className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition ${selectedTag === t ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' : 'bg-gray-100 text-gray-500'}`}>{t}</button>)}</div>
@@ -373,13 +408,32 @@
                             const isExpanded = expandedCardId === card.id;
                             const daysLeft = getBillingInfo(card.billingDay);
                             const isUrgent = daysLeft !== null && daysLeft <= 3 && daysLeft >= 0;
+                            const isCycle = card.cycleType === 'billing';
 
                             return (
                                 <div key={card.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 relative overflow-hidden group">
                                     <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${card.color}`}></div>
                                     <div className="p-5 pb-3">
                                         <div className="flex justify-between items-start mb-2 pl-2">
-                                            <div><h3 className="font-bold text-lg text-gray-800 flex items-center gap-2">{card.name} {isOverLimit && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full flex items-center gap-1"><AlertCircle className="w-3 h-3"/> 已滿</span>}</h3><div className="text-sm text-gray-500 mt-0.5 flex flex-wrap items-center gap-2"><span>{maxCap > 0 ? (caps.length > 1 ? `分段上限 $${maxCap.toLocaleString()}` : `上限 $${maxCap.toLocaleString()}`) : '無上限'} <span className="text-gray-300 mx-1">|</span> 最高 {getTotalRate(card)}%</span>{card.billingDay && (<span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs ${isUrgent ? 'bg-orange-100 text-orange-600 font-bold' : 'bg-gray-100 text-gray-500'}`}><Calendar className="w-3 h-3" /> {card.billingDay}日結帳 {isUrgent && `(剩${daysLeft}天)`}</span>)}</div></div>
+                                            <div>
+                                                <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2">
+                                                    {card.name} 
+                                                    {isOverLimit && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full flex items-center gap-1"><AlertCircle className="w-3 h-3"/> 已滿</span>}
+                                                </h3>
+                                                <div className="text-sm text-gray-500 mt-0.5 flex flex-wrap items-center gap-2">
+                                                    <span>{maxCap > 0 ? (caps.length > 1 ? `分段上限 $${maxCap.toLocaleString()}` : `上限 $${maxCap.toLocaleString()}`) : '無上限'} <span className="text-gray-300 mx-1">|</span> 最高 {getTotalRate(card)}%</span>
+                                                    {/* 週期標籤 */}
+                                                    <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs ${isCycle ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                                                        {isCycle ? <RefreshCcw className="w-3 h-3"/> : <Calendar className="w-3 h-3"/>}
+                                                        {isCycle ? '週期' : '月制'}
+                                                    </span>
+                                                    {card.billingDay && (
+                                                        <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs ${isUrgent ? 'bg-orange-100 text-orange-600 font-bold' : 'bg-gray-100 text-gray-500'}`}>
+                                                            {card.billingDay}日結 {isUrgent && `(剩${daysLeft}天)`}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
                                             <button onClick={() => openEditModal(card)} className="text-gray-400 p-2 hover:text-gray-600"><Edit2 className="w-4 h-4" /></button>
                                         </div>
                                         <div className="pl-2 mb-3 flex flex-wrap gap-1.5">{card.tags?.map(t => <span key={t} className="text-xs px-2 py-0.5 bg-gray-50 text-gray-500 rounded-md border border-gray-100">#{t}</span>)}</div>
@@ -407,12 +461,36 @@
                         <button onClick={() => openEditModal()} className="w-full py-4 border-2 border-dashed border-gray-300 rounded-2xl text-gray-400 flex items-center justify-center gap-2 hover:border-blue-500 hover:text-blue-500 transition"><Plus className="w-5 h-5" /> 新增卡片</button>
                     </div>
 
-                    {isSettleModalOpen && (<div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm"><div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-fade-in-up text-center"><div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle className="w-8 h-8 text-blue-600" /></div><h2 className="text-2xl font-bold text-gray-800 mb-1">{settleTargetCard ? `確認結算 ${settleTargetCard.name}？` : "確認結算所有卡片？"}</h2><p className="text-sm text-gray-500 mb-6">{new Date().toISOString().slice(0, 7)} 的消費紀錄將 <span className="font-bold text-blue-600">累加</span> 入歷史帳本，並將{settleTargetCard ? "此張" : "所有"}卡片額度歸零。</p><div className="flex gap-3"><button onClick={() => setIsSettleModalOpen(false)} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50">取消</button><button onClick={handleConfirmSettle} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2">{isSyncing ? <RefreshCw className="w-5 h-5 animate-spin" /> : "確認結算"}</button></div></div></div>)}
-                    {/* ... (Other Modals and Toast component remain same) ... */}
+                    {isSettleModalOpen && (<div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm"><div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl animate-fade-in-up text-center"><div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"><CheckCircle className="w-8 h-8 text-blue-600" /></div><h2 className="text-2xl font-bold text-gray-800 mb-1">{settleTargetCard ? `確認結算 ${settleTargetCard.name}？` : "確認進行月結算？"}</h2>
+                    <p className="text-sm text-gray-500 mb-6">
+                        {settleTargetCard ? (
+                            <span>將 <span className="font-bold text-blue-600">{settleTargetCard.name}</span> 的金額累入歷史，並歸零額度。</span>
+                        ) : (
+                            <span>將所有 <span className="font-bold text-blue-600">日曆月制</span> 卡片金額累入歷史，並歸零額度。<br/><span className="text-xs text-orange-500">(週期制卡片不會受到影響)</span></span>
+                        )}
+                    </p>
+                    <div className="flex gap-3"><button onClick={() => setIsSettleModalOpen(false)} className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-bold hover:bg-gray-50">取消</button><button onClick={handleConfirmSettle} className="flex-1 py-3 rounded-xl bg-blue-600 text-white font-bold hover:bg-blue-700 shadow-lg shadow-blue-500/30 flex items-center justify-center gap-2">{isSyncing ? <RefreshCw className="w-5 h-5 animate-spin" /> : "確認結算"}</button></div></div></div>)}
+                    
                     {/* Edit Modal */}
                     {isEditModalOpen && (<div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm overflow-y-auto"><div className="bg-white rounded-3xl w-full max-w-sm p-6 space-y-4 my-auto shadow-2xl animate-fade-in-up"><div className="flex justify-between items-center"><h3 className="font-bold text-lg">卡片設定</h3><button onClick={closeEditModal}><X className="w-6 h-6 text-gray-400" /></button></div><input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="卡片名稱" className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500" /><div className="bg-blue-50 p-3 rounded-xl border border-blue-100"><label className="block text-xs font-bold text-blue-700 mb-1">目前已刷金額 (手動修正)</label><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span><input type="number" value={formCurrentSpend} onChange={(e) => setFormCurrentSpend(e.target.value)} className="w-full pl-7 pr-3 py-2 rounded-lg border border-blue-200 text-blue-900 font-bold focus:ring-2 focus:ring-blue-500 outline-none" inputMode="decimal" /></div></div>
-                    {/* 結帳日設定 */}
-                    <div><label className="block text-sm font-medium text-gray-700 mb-1">結帳日 (選填)</label><div className="relative"><input type="number" value={formBillingDay} onChange={(e) => setFormBillingDay(e.target.value)} placeholder="例如 25" min="1" max="31" className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500" /><span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm">號</span></div></div>
+                    
+                    {/* 週期設定區域 */}
+                    <div className="grid grid-cols-2 gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                        <div className="col-span-2 text-sm font-bold text-gray-700 mb-1">回饋週期類型</div>
+                        <label className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer ${formCycleType === 'month' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200'}`}>
+                            <input type="radio" name="cycleType" value="month" checked={formCycleType === 'month'} onChange={(e) => setFormCycleType(e.target.value)} className="w-4 h-4 text-blue-600" />
+                            <span className="text-sm">📅 月制 (1號)</span>
+                        </label>
+                        <label className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer ${formCycleType === 'billing' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200'}`}>
+                            <input type="radio" name="cycleType" value="billing" checked={formCycleType === 'billing'} onChange={(e) => setFormCycleType(e.target.value)} className="w-4 h-4 text-blue-600" />
+                            <span className="text-sm">🔄 週期制</span>
+                        </label>
+                    </div>
+
+                    <div className="flex gap-3">
+                        <div className="flex-1"><label className="block text-sm font-medium text-gray-700 mb-1">結帳日 (號)</label><input type="number" value={formBillingDay} onChange={(e) => setFormBillingDay(e.target.value)} placeholder="25" min="1" max="31" className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500" /></div>
+                        <div className="flex-1"><label className="block text-sm font-medium text-gray-700 mb-1">截止日 (號)</label><input type="number" value={formPaymentDay} onChange={(e) => setFormPaymentDay(e.target.value)} placeholder="10" min="1" max="31" className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500" /></div>
+                    </div>
                     <div><div className="flex justify-between mb-2 text-sm font-medium text-gray-700"><span>回饋規則</span><button onClick={() => setFormRewards([...formRewards, {name:'', rate:'', cap:''}])} className="text-blue-600 text-xs font-bold bg-blue-50 px-2 py-1 rounded">+ 新增</button></div><div className="space-y-2">{formRewards.map((r, i) => (<div key={i} className="flex flex-col gap-2 bg-gray-50 p-2 rounded-lg border border-gray-100"><div className="flex gap-2"><input value={r.name} onChange={(e)=>handleRewardChange(i,'name',e.target.value)} placeholder="名稱" className="flex-1 px-2 py-1 text-sm rounded border border-gray-200 outline-none"/><button onClick={()=>{const n=[...formRewards];n.splice(i,1);removeRewardRow(i)}}><X className="w-4 h-4 text-gray-400"/></button></div><div className="flex gap-2"><div className="flex-1 relative"><span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">%</span><input type="number" value={r.rate} onChange={(e)=>handleRewardChange(i,'rate',e.target.value)} placeholder="%" className="w-full pl-6 pr-2 py-1 text-sm rounded border border-gray-200 outline-none" inputMode="decimal"/></div><div className="flex-1 relative"><span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">限</span><input type="number" value={r.cap} onChange={(e)=>handleRewardChange(i,'cap',e.target.value)} placeholder="0" className="w-full pl-6 pr-2 py-1 text-sm rounded border border-gray-200 outline-none" inputMode="decimal"/></div></div></div>))}</div></div><div><div className="mb-2 text-sm font-medium text-gray-700">顏色</div><div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">{COLORS.map(c => <button key={c.value} onClick={() => setFormColor(c.value)} className={`w-6 h-6 rounded-full flex-shrink-0 ${c.value} ${formColor === c.value ? 'ring-2 ring-offset-2 ring-gray-400 scale-110' : ''}`} />)}</div></div><div><div className="mb-2 text-sm font-medium text-gray-700">標籤</div><div className="flex gap-2 mb-2"><input value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e)=>{if(e.key==='Enter')handleAddTag(e)}} placeholder="新增標籤" className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none"/><button onClick={handleAddTag} className="bg-gray-800 text-white px-3 py-2 rounded-lg text-sm">新增</button></div><div className="flex flex-wrap gap-2">{formTags.map(t => <span key={t} className="px-2 py-1 bg-gray-100 rounded text-xs flex items-center gap-1 border border-gray-200">{t} <button onClick={()=>setFormTags(formTags.filter(tg=>tg!==t))}><X className="w-3 h-3"/></button></span>)}</div></div>
                     {/* 排序與動作按鈕 */}
                     <div className="pt-2 border-t border-gray-100 space-y-3">
