@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>信用卡管家 (最終版)</title>
+    <title>信用卡管家 (特店速查版)</title>
 
     <!-- ▼▼▼ App 圖示與 PWA 設定 ▼▼▼ -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%232563eb%22 rx=%2220%22></rect><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22central%22 text-anchor=%22middle%22 font-size=%2270%22>💳</text></svg>">
@@ -44,7 +44,7 @@
     <script type="text/babel" data-type="module">
         import React, { useState, useEffect } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { Plus, Minus, Trash2, Edit2, RotateCcw, CreditCard, DollarSign, TrendingUp, AlertCircle, X, Tag, Cloud, RefreshCw, Calculator, ChevronDown, ChevronUp, Layers, History, Calendar, ArrowLeft, Key, LogIn, LogOut, CheckCircle, Save, AlertTriangle, Bell, ArrowUp, ArrowDown, FileCheck, CalendarClock, RefreshCcw } from 'lucide-react';
+        import { Plus, Minus, Trash2, Edit2, RotateCcw, CreditCard, DollarSign, TrendingUp, AlertCircle, X, Tag, Cloud, RefreshCw, Calculator, ChevronDown, ChevronUp, Layers, History, Calendar, ArrowLeft, Key, LogIn, LogOut, CheckCircle, Save, AlertTriangle, Bell, ArrowUp, ArrowDown, FileCheck, CalendarClock, RefreshCcw, Globe, ExternalLink, Link as LinkIcon } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
         import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
         import { getFirestore, doc, setDoc, deleteDoc, updateDoc, getDoc, onSnapshot, collection, query, orderBy, serverTimestamp } from 'firebase/firestore';
@@ -75,22 +75,10 @@
                 ],
                 currentSpend: 0,
                 billingDay: 25, 
-                cycleType: 'month', // 'month' or 'billing'
+                cycleType: 'month',
+                officialUrl: 'https://bank.sinopac.com/sinopacBT/personal/credit-card/introduction/bankcard/sport-card.html',
                 color: "bg-red-500",
                 tags: ["加油", "高鐵", "Apple Pay"]
-            },
-            {
-                id: 2,
-                name: "永豐大戶 (指定通路)",
-                rewards: [
-                    { name: "任務加碼", rate: 1, cap: 30000 },
-                    { name: "指定通路", rate: 5, cap: 6000 }
-                ],
-                currentSpend: 0,
-                billingDay: 20, 
-                cycleType: 'billing', // 這是週期卡
-                color: "bg-gray-800",
-                tags: ["超商", "電影"]
             }
         ];
 
@@ -144,7 +132,8 @@
             const [formCurrentSpend, setFormCurrentSpend] = useState("");
             const [formBillingDay, setFormBillingDay] = useState("");
             const [formPaymentDay, setFormPaymentDay] = useState(""); 
-            const [formCycleType, setFormCycleType] = useState("month"); 
+            const [formCycleType, setFormCycleType] = useState("month");
+            const [formUrl, setFormUrl] = useState(""); // 新增：網址欄位
 
             const [historyFormSpend, setHistoryFormSpend] = useState("");
             const [historyFormReward, setHistoryFormReward] = useState("");
@@ -289,7 +278,8 @@
                     id: currentEditingCard ? currentEditingCard.id : Date.now(), 
                     name: formName, rewards: cleanRewards, color: formColor, tags: formTags, 
                     currentSpend: parseFloat(formCurrentSpend) || 0, 
-                    billingDay: parseInt(formBillingDay) || 0, paymentDay: parseInt(formPaymentDay) || 0, cycleType: formCycleType 
+                    billingDay: parseInt(formBillingDay) || 0, paymentDay: parseInt(formPaymentDay) || 0, cycleType: formCycleType,
+                    officialUrl: formUrl // 儲存網址
                 }; 
                 saveCardsToCloud(currentEditingCard ? cards.map(c => c.id === currentEditingCard.id ? newCardData : c) : [...cards, newCardData]); 
                 closeEditModal(); showToast("卡片已儲存"); 
@@ -309,7 +299,8 @@
                 setCurrentEditingCard(card); setFormName(card?.name||""); setFormColor(card?.color||COLORS[1].value); setFormTags(card?.tags||[]); 
                 setFormRewards(card?.rewards || [{ name: '基本回饋', rate: '1', cap: '0' }, { name: '指定加碼', rate: '', cap: '' }]); 
                 setFormCurrentSpend(card?.currentSpend || 0); setFormBillingDay(card?.billingDay || ""); setFormPaymentDay(card?.paymentDay || "");
-                setFormCycleType(card?.cycleType || "month"); setIsEditModalOpen(true); 
+                setFormCycleType(card?.cycleType || "month"); setFormUrl(card?.officialUrl || ""); // 載入網址
+                setIsEditModalOpen(true); 
             };
             const openSpendModal = (card) => { setCurrentEditingCard(card); setSpendAmount(""); setIsSubtractMode(false); setIsSpendModalOpen(true); };
             const closeEditModal = () => setIsEditModalOpen(false);
@@ -419,6 +410,12 @@
                                                 <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2">
                                                     {card.name} 
                                                     {isOverLimit && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full flex items-center gap-1"><AlertCircle className="w-3 h-3"/> 已滿</span>}
+                                                    {/* 特店查詢按鈕 (若有網址) */}
+                                                    {card.officialUrl && (
+                                                        <a href={card.officialUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-gray-400 hover:text-blue-500 p-1" title="查詢特店">
+                                                            <Globe className="w-4 h-4" />
+                                                        </a>
+                                                    )}
                                                 </h3>
                                                 <div className="text-sm text-gray-500 mt-0.5 flex flex-wrap items-center gap-2">
                                                     <span>{maxCap > 0 ? (caps.length > 1 ? `分段上限 $${maxCap.toLocaleString()}` : `上限 $${maxCap.toLocaleString()}`) : '無上限'} <span className="text-gray-300 mx-1">|</span> 最高 {getTotalRate(card)}%</span>
@@ -474,6 +471,17 @@
                     {/* Edit Modal */}
                     {isEditModalOpen && (<div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm overflow-y-auto"><div className="bg-white rounded-3xl w-full max-w-sm p-6 space-y-4 my-auto shadow-2xl animate-fade-in-up"><div className="flex justify-between items-center"><h3 className="font-bold text-lg">卡片設定</h3><button onClick={closeEditModal}><X className="w-6 h-6 text-gray-400" /></button></div><input type="text" value={formName} onChange={(e) => setFormName(e.target.value)} placeholder="卡片名稱" className="w-full px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500" /><div className="bg-blue-50 p-3 rounded-xl border border-blue-100"><label className="block text-xs font-bold text-blue-700 mb-1">目前已刷金額 (手動修正)</label><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">$</span><input type="number" value={formCurrentSpend} onChange={(e) => setFormCurrentSpend(e.target.value)} className="w-full pl-7 pr-3 py-2 rounded-lg border border-blue-200 text-blue-900 font-bold focus:ring-2 focus:ring-blue-500 outline-none" inputMode="decimal" /></div></div>
                     
+                    {/* 官方網址 (New Feature) */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">官方回饋查詢網址 (選填)</label>
+                        <div className="flex gap-2">
+                            <input type="url" value={formUrl} onChange={(e) => setFormUrl(e.target.value)} placeholder="https://..." className="flex-1 px-4 py-2 rounded-lg border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
+                            <a href={formUrl} target="_blank" rel="noopener noreferrer" className={`flex items-center justify-center w-10 h-10 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 ${!formUrl ? 'pointer-events-none opacity-50' : ''}`}>
+                                <ExternalLink className="w-5 h-5" />
+                            </a>
+                        </div>
+                    </div>
+
                     {/* 週期設定區域 */}
                     <div className="grid grid-cols-2 gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
                         <div className="col-span-2 text-sm font-bold text-gray-700 mb-1">回饋週期類型</div>
