@@ -3,17 +3,43 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>信用卡管家 (完美版)</title>
+    <title>信用卡管家 (相容版)</title>
 
-    <!-- ▼▼▼ App 圖示與 PWA 設定 ▼▼▼ -->
+    <!-- ▼▼▼ App 圖示 ▼▼▼ -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%232563eb%22 rx=%2220%22></rect><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22central%22 text-anchor=%22middle%22 font-size=%2270%22>💳</text></svg>">
     <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%232563eb%22></rect><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22central%22 text-anchor=%22middle%22 font-size=%2270%22>💳</text></svg>">
     <meta name="theme-color" content="#2563eb">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     
+    <!-- 1. 載入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. 加入 ES Module Shims (關鍵修復：讓舊手機支援 Import Maps) -->
+    <script async src="https://ga.jspm.io/npm:es-module-shims@1.7.0/dist/es-module-shims.js"></script>
+
+    <!-- 3. 錯誤捕捉器 (如果白畫面會顯示紅字) -->
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            // 忽略 ResizeObserver 常見良性錯誤
+            if (msg.includes('ResizeObserver loop')) return;
+            document.getElementById('root').innerHTML = `
+                <div style="padding:20px; color:#ef4444; font-family:sans-serif; text-align:center; margin-top:50px;">
+                    <h2 style="font-size:20px; font-weight:bold; margin-bottom:10px;">⚠️ 發生錯誤</h2>
+                    <p style="margin-bottom:10px;">請截圖傳給開發者：</p>
+                    <div style="background:#fee2e2; padding:10px; border-radius:8px; text-align:left; font-size:12px; overflow:auto;">
+                        ${msg}<br/>
+                        ${error ? error.stack : ''}
+                    </div>
+                    <button onclick="location.reload()" style="margin-top:20px; padding:10px 20px; background:#2563eb; color:white; border:none; border-radius:8px;">重新整理</button>
+                </div>
+            `;
+        };
+    </script>
+
+    <!-- 4. 載入 Babel -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+    <!-- 5. 設定套件地圖 -->
     <script type="importmap">
     {
       "imports": {
@@ -39,12 +65,17 @@
     </style>
 </head>
 <body class="bg-gray-50 text-gray-900 font-sans pb-20">
-    <div id="root"></div>
+    <!-- 預設顯示載入中 -->
+    <div id="root" class="flex h-screen flex-col items-center justify-center text-gray-400 space-y-4">
+        <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500"></div>
+        <p>系統載入中...</p>
+    </div>
 
     <script type="text/babel" data-type="module">
         import React, { useState, useEffect } from 'react';
         import { createRoot } from 'react-dom/client';
-        import { Plus, Minus, Trash2, Edit2, RotateCcw, CreditCard, DollarSign, TrendingUp, AlertCircle, X, Tag, Cloud, RefreshCw, Calculator, ChevronDown, ChevronUp, Layers, History, Calendar, ArrowLeft, Key, LogIn, LogOut, CheckCircle, Save, AlertTriangle, Bell, ArrowUp, ArrowDown, FileCheck, CalendarClock, RefreshCcw, Globe, ExternalLink, Link as LinkIcon } from 'lucide-react';
+        // 注意：這裡改用 lucide-react 的默認導出，有時候能解決相容性問題，但 esm.sh 支援 named export
+        import { Plus, Minus, Trash2, Edit2, RotateCcw, CreditCard, DollarSign, TrendingUp, AlertCircle, X, Tag, Cloud, RefreshCw, Calculator, ChevronDown, ChevronUp, Layers, History, Calendar, ArrowLeft, Key, LogIn, LogOut, CheckCircle, Save, AlertTriangle, Bell, ArrowUp, ArrowDown, FileCheck, CalendarClock, RefreshCcw, Globe, ExternalLink, Link as LinkIcon, Eye, EyeOff } from 'lucide-react';
         import { initializeApp } from 'firebase/app';
         import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
         import { getFirestore, doc, setDoc, deleteDoc, updateDoc, getDoc, onSnapshot, collection, query, orderBy, serverTimestamp } from 'firebase/firestore';
@@ -59,9 +90,16 @@
             appId: "1:450336524248:web:ecf5b879698b590e6414ad"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        // 初始化 Firebase (加 try-catch 確保錯誤可見)
+        let app, auth, db;
+        try {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+        } catch (e) {
+            console.error("Firebase Init Error", e);
+            throw new Error("資料庫連線失敗，請檢查網路");
+        }
 
         // 預設卡片資料
         const DEFAULT_CARDS = [
@@ -75,7 +113,7 @@
                 ],
                 currentSpend: 0,
                 billingDay: 25, 
-                cycleType: 'month',
+                cycleType: 'month', // 'month' or 'billing'
                 color: "bg-red-500",
                 tags: ["加油", "高鐵", "Apple Pay"]
             },
@@ -88,7 +126,7 @@
                 ],
                 currentSpend: 0,
                 billingDay: 25,
-                cycleType: 'billing',
+                cycleType: 'billing', // 這是週期卡
                 color: "bg-gray-800",
                 tags: ["超商", "電影"]
             }
@@ -228,30 +266,10 @@
             const totalReward = cards.reduce((acc, card) => acc + calculateReward(card).total, 0);
             const totalRate = totalSpend > 0 ? ((totalReward / totalSpend) * 100).toFixed(2) : 0;
 
-            // --- 統一的日期計算邏輯 (核心優化) ---
-            const getNextDate = (day) => {
+            const getBillingInfo = (day) => {
                 if (!day) return null;
-                const today = new Date();
-                today.setHours(0, 0, 0, 0); // 歸零時分秒，避免誤差
-                
-                let targetDate = new Date(today.getFullYear(), today.getMonth(), day);
-                // 處理月份溢出 (例如 2/30 -> 2/28 or 2/29)
-                while(targetDate.getMonth() !== today.getMonth()) { targetDate.setDate(targetDate.getDate() - 1); }
-                
-                if (targetDate < today) { 
-                    // 如果日期已過，算下個月
-                    targetDate = new Date(today.getFullYear(), today.getMonth() + 1, day); 
-                    // 處理下個月溢出
-                    while(targetDate.getMonth() !== (today.getMonth() + 1) % 12) { targetDate.setDate(targetDate.getDate() - 1); } 
-                }
-                return targetDate;
-            };
-
-            const getDaysLeft = (dateObj) => {
-                if (!dateObj) return null;
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                return Math.ceil((dateObj - today) / (1000 * 60 * 60 * 24));
+                const today = new Date(); const currentDay = today.getDate();
+                let daysLeft = day - currentDay; if (daysLeft < 0) daysLeft += 30; return daysLeft;
             };
 
             // --- 結算邏輯 ---
@@ -351,11 +369,23 @@
             const editingTotalReward = editingHistoryCards.reduce((acc, c) => acc + (parseFloat(c.reward) || 0), 0);
 
             // --- Schedule Logic (Smart Grouping) ---
+            const getNextDate = (day) => {
+                if (!day) return null;
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                
+                let targetDate = new Date(today.getFullYear(), today.getMonth(), day);
+                while(targetDate.getMonth() !== today.getMonth()) { targetDate.setDate(targetDate.getDate() - 1); }
+                if (targetDate < today) { targetDate = new Date(today.getFullYear(), today.getMonth() + 1, day); while(targetDate.getMonth() !== (today.getMonth() + 1) % 12) { targetDate.setDate(targetDate.getDate() - 1); } }
+                return targetDate;
+            };
+
             const getScheduleItems = () => {
                 const eventMap = {}; 
                 cards.forEach(card => {
                     const billingDate = getNextDate(card.billingDay);
                     const paymentDate = getNextDate(card.paymentDay);
+                    const today = new Date(); today.setHours(0,0,0,0);
                     
                     if (billingDate) {
                         const dateStr = billingDate.toISOString().split('T')[0];
@@ -363,7 +393,7 @@
                         if (!eventMap[key]) {
                             eventMap[key] = {
                                 id: key, type: 'billing', date: billingDate,
-                                daysLeft: getDaysLeft(billingDate), cards: []
+                                daysLeft: Math.ceil((billingDate - today) / (1000 * 60 * 60 * 24)), cards: []
                             };
                         }
                         eventMap[key].cards.push(card);
@@ -375,7 +405,7 @@
                         if (!eventMap[key]) {
                             eventMap[key] = {
                                 id: key, type: 'payment', date: paymentDate,
-                                daysLeft: getDaysLeft(paymentDate), cards: []
+                                daysLeft: Math.ceil((paymentDate - today) / (1000 * 60 * 60 * 24)), cards: []
                             };
                         }
                         eventMap[key].cards.push(card);
