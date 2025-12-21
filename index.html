@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>信用卡管家 (特店速查版)</title>
+    <title>信用卡管家 (完美版)</title>
 
     <!-- ▼▼▼ App 圖示與 PWA 設定 ▼▼▼ -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 fill=%22%232563eb%22 rx=%2220%22></rect><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22central%22 text-anchor=%22middle%22 font-size=%2270%22>💳</text></svg>">
@@ -76,9 +76,21 @@
                 currentSpend: 0,
                 billingDay: 25, 
                 cycleType: 'month',
-                officialUrl: 'https://bank.sinopac.com/sinopacBT/personal/credit-card/introduction/bankcard/sport-card.html',
                 color: "bg-red-500",
                 tags: ["加油", "高鐵", "Apple Pay"]
+            },
+            {
+                id: 2,
+                name: "永豐大戶 (指定通路)",
+                rewards: [
+                    { name: "任務加碼", rate: 1, cap: 30000 },
+                    { name: "指定通路", rate: 5, cap: 6000 }
+                ],
+                currentSpend: 0,
+                billingDay: 25,
+                cycleType: 'billing',
+                color: "bg-gray-800",
+                tags: ["超商", "電影"]
             }
         ];
 
@@ -96,6 +108,7 @@
             const [user, setUser] = useState(null);
             const [syncId, setSyncId] = useState(() => localStorage.getItem('card_manager_sync_id') || '');
             const [tempSyncId, setTempSyncId] = useState(''); 
+            const [showPassword, setShowPassword] = useState(false);
 
             const [cards, setCards] = useState([]);
             const [history, setHistory] = useState([]);
@@ -133,7 +146,7 @@
             const [formBillingDay, setFormBillingDay] = useState("");
             const [formPaymentDay, setFormPaymentDay] = useState(""); 
             const [formCycleType, setFormCycleType] = useState("month");
-            const [formUrl, setFormUrl] = useState(""); // 新增：網址欄位
+            const [formUrl, setFormUrl] = useState("");
 
             const [historyFormSpend, setHistoryFormSpend] = useState("");
             const [historyFormReward, setHistoryFormReward] = useState("");
@@ -215,10 +228,30 @@
             const totalReward = cards.reduce((acc, card) => acc + calculateReward(card).total, 0);
             const totalRate = totalSpend > 0 ? ((totalReward / totalSpend) * 100).toFixed(2) : 0;
 
-            const getBillingInfo = (day) => {
+            // --- 統一的日期計算邏輯 (核心優化) ---
+            const getNextDate = (day) => {
                 if (!day) return null;
-                const today = new Date(); const currentDay = today.getDate();
-                let daysLeft = day - currentDay; if (daysLeft < 0) daysLeft += 30; return daysLeft;
+                const today = new Date();
+                today.setHours(0, 0, 0, 0); // 歸零時分秒，避免誤差
+                
+                let targetDate = new Date(today.getFullYear(), today.getMonth(), day);
+                // 處理月份溢出 (例如 2/30 -> 2/28 or 2/29)
+                while(targetDate.getMonth() !== today.getMonth()) { targetDate.setDate(targetDate.getDate() - 1); }
+                
+                if (targetDate < today) { 
+                    // 如果日期已過，算下個月
+                    targetDate = new Date(today.getFullYear(), today.getMonth() + 1, day); 
+                    // 處理下個月溢出
+                    while(targetDate.getMonth() !== (today.getMonth() + 1) % 12) { targetDate.setDate(targetDate.getDate() - 1); } 
+                }
+                return targetDate;
+            };
+
+            const getDaysLeft = (dateObj) => {
+                if (!dateObj) return null;
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                return Math.ceil((dateObj - today) / (1000 * 60 * 60 * 24));
             };
 
             // --- 結算邏輯 ---
@@ -279,7 +312,7 @@
                     name: formName, rewards: cleanRewards, color: formColor, tags: formTags, 
                     currentSpend: parseFloat(formCurrentSpend) || 0, 
                     billingDay: parseInt(formBillingDay) || 0, paymentDay: parseInt(formPaymentDay) || 0, cycleType: formCycleType,
-                    officialUrl: formUrl // 儲存網址
+                    officialUrl: formUrl 
                 }; 
                 saveCardsToCloud(currentEditingCard ? cards.map(c => c.id === currentEditingCard.id ? newCardData : c) : [...cards, newCardData]); 
                 closeEditModal(); showToast("卡片已儲存"); 
@@ -299,7 +332,7 @@
                 setCurrentEditingCard(card); setFormName(card?.name||""); setFormColor(card?.color||COLORS[1].value); setFormTags(card?.tags||[]); 
                 setFormRewards(card?.rewards || [{ name: '基本回饋', rate: '1', cap: '0' }, { name: '指定加碼', rate: '', cap: '' }]); 
                 setFormCurrentSpend(card?.currentSpend || 0); setFormBillingDay(card?.billingDay || ""); setFormPaymentDay(card?.paymentDay || "");
-                setFormCycleType(card?.cycleType || "month"); setFormUrl(card?.officialUrl || ""); // 載入網址
+                setFormCycleType(card?.cycleType || "month"); setFormUrl(card?.officialUrl || ""); 
                 setIsEditModalOpen(true); 
             };
             const openSpendModal = (card) => { setCurrentEditingCard(card); setSpendAmount(""); setIsSubtractMode(false); setIsSpendModalOpen(true); };
@@ -317,26 +350,38 @@
             const editingTotalSpend = editingHistoryCards.reduce((acc, c) => acc + (parseFloat(c.spend) || 0), 0);
             const editingTotalReward = editingHistoryCards.reduce((acc, c) => acc + (parseFloat(c.reward) || 0), 0);
 
-            // --- Schedule Logic ---
-            const getNextDate = (day) => {
-                if (!day) return null;
-                const today = new Date();
-                let targetDate = new Date(today.getFullYear(), today.getMonth(), day);
-                while(targetDate.getMonth() !== today.getMonth()) { targetDate.setDate(targetDate.getDate() - 1); }
-                if (targetDate < today) { targetDate = new Date(today.getFullYear(), today.getMonth() + 1, day); while(targetDate.getMonth() !== (today.getMonth() + 1) % 12) { targetDate.setDate(targetDate.getDate() - 1); } }
-                return targetDate;
-            };
-
+            // --- Schedule Logic (Smart Grouping) ---
             const getScheduleItems = () => {
-                const items = [];
+                const eventMap = {}; 
                 cards.forEach(card => {
                     const billingDate = getNextDate(card.billingDay);
                     const paymentDate = getNextDate(card.paymentDay);
-                    const today = new Date();
-                    if (billingDate) { items.push({ id: card.id + '_bill', card, type: 'billing', date: billingDate, daysLeft: Math.ceil((billingDate - today) / (1000 * 60 * 60 * 24)) }); }
-                    if (paymentDate) { items.push({ id: card.id + '_pay', card, type: 'payment', date: paymentDate, daysLeft: Math.ceil((paymentDate - today) / (1000 * 60 * 60 * 24)) }); }
+                    
+                    if (billingDate) {
+                        const dateStr = billingDate.toISOString().split('T')[0];
+                        const key = `${dateStr}_billing`;
+                        if (!eventMap[key]) {
+                            eventMap[key] = {
+                                id: key, type: 'billing', date: billingDate,
+                                daysLeft: getDaysLeft(billingDate), cards: []
+                            };
+                        }
+                        eventMap[key].cards.push(card);
+                    }
+
+                    if (paymentDate) {
+                        const dateStr = paymentDate.toISOString().split('T')[0];
+                        const key = `${dateStr}_payment`;
+                        if (!eventMap[key]) {
+                            eventMap[key] = {
+                                id: key, type: 'payment', date: paymentDate,
+                                daysLeft: getDaysLeft(paymentDate), cards: []
+                            };
+                        }
+                        eventMap[key].cards.push(card);
+                    }
                 });
-                return items.sort((a, b) => a.daysLeft - b.daysLeft);
+                return Object.values(eventMap).sort((a, b) => a.daysLeft - b.daysLeft);
             };
 
             if (!syncId) return <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6"><div className="bg-white p-8 rounded-3xl shadow-xl w-full max-w-sm text-center"><div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"><Key className="w-8 h-8 text-blue-600" /></div><h1 className="text-2xl font-bold text-gray-800 mb-2">輸入連動密碼</h1><p className="text-gray-500 text-sm mb-6">請在不同裝置輸入相同的密碼，即可同步您的記帳資料。</p><form onSubmit={handleLogin} className="space-y-4"><div className="relative"><input type="text" value={tempSyncId} onChange={(e) => setTempSyncId(e.target.value)} placeholder="例如：my-secret-123" className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-blue-500 outline-none text-center text-lg bg-gray-50" inputMode="text" /></div><button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition active:scale-95 flex items-center justify-center gap-2"><LogIn className="w-5 h-5" /> 開始使用</button></form></div></div>;
@@ -347,7 +392,7 @@
                 return (
                     <div className="min-h-screen bg-gray-50 pb-20 font-sans text-gray-900">
                         <div className="bg-white px-6 pt-8 pb-4 rounded-b-3xl shadow-sm sticky top-0 z-20 flex justify-between items-center"><h1 className="text-xl font-bold text-gray-800 flex items-center gap-2"><CalendarClock className="w-6 h-6 text-purple-600" />繳費日程</h1><button onClick={() => setView('dashboard')} className="text-sm flex items-center gap-1 bg-gray-100 px-3 py-1.5 rounded-full text-gray-600 active:scale-95 transition"><ArrowLeft className="w-4 h-4" /> 返回</button></div>
-                        <div className="px-4 py-4 space-y-4">{scheduleItems.length === 0 ? <div className="text-center py-10 text-gray-400"><p>尚未設定結帳日或截止日</p><p className="text-xs mt-2">請去編輯卡片設定日期</p></div> : scheduleItems.map(item => (<div key={item.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 flex items-center justify-between"><div className="flex items-center gap-3"><div className={`w-1.5 h-12 rounded-full ${item.card.color}`}></div><div><div className="font-bold text-gray-800 flex items-center gap-2">{item.card.name} <span className={`text-xs px-2 py-0.5 rounded-full ${item.type === 'payment' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>{item.type === 'payment' ? '繳款' : '結帳'}</span></div><div className="text-sm text-gray-500 mt-0.5">{item.date.getMonth() + 1}/{item.date.getDate()} {item.type === 'payment' ? '截止' : '結算'}</div></div></div><div className="text-right"><div className={`text-xl font-bold ${item.daysLeft <= 3 ? 'text-red-500' : 'text-gray-800'}`}>{item.daysLeft} <span className="text-xs font-normal text-gray-500">天後</span></div>{item.daysLeft <= 3 && <div className="text-xs text-red-500 font-bold flex items-center justify-end gap-1"><AlertCircle className="w-3 h-3"/> 即將到期</div>}</div></div>))}</div>
+                        <div className="px-4 py-4 space-y-4">{scheduleItems.length === 0 ? <div className="text-center py-10 text-gray-400"><p>尚未設定結帳日或截止日</p><p className="text-xs mt-2">請去編輯卡片設定日期</p></div> : scheduleItems.map(item => (<div key={item.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 flex items-center justify-between"><div className="flex items-center gap-3 overflow-hidden"><div className="flex flex-col gap-1">{item.cards.map((card, idx) => (<div key={idx} className={`w-1.5 h-6 rounded-full ${card.color}`}></div>))}</div><div className="flex-1 min-w-0"><div className="font-bold text-gray-800 flex flex-wrap items-center gap-2"><span className="truncate">{item.cards.map(c => c.name).join('、')}</span><span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap flex-shrink-0 ${item.type === 'payment' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>{item.type === 'payment' ? '繳款' : '結帳'}</span></div><div className="text-sm text-gray-500 mt-0.5">{item.date.getMonth() + 1}/{item.date.getDate()} {item.type === 'payment' ? '截止' : '結算'} <span className="text-xs ml-1 text-gray-400">(共 {item.cards.length} 張)</span></div></div></div><div className="text-right flex-shrink-0 pl-2"><div className={`text-xl font-bold ${item.daysLeft <= 3 ? 'text-red-500' : 'text-gray-800'}`}>{item.daysLeft} <span className="text-xs font-normal text-gray-500">天後</span></div>{item.daysLeft <= 3 && <div className="text-xs text-red-500 font-bold flex items-center justify-end gap-1"><AlertCircle className="w-3 h-3"/> 急</div>}{item.daysLeft === 0 && <div className="text-xs text-blue-500 font-bold flex items-center justify-end gap-1">今日</div>}</div></div>))}</div>
                     </div>
                 );
             }
