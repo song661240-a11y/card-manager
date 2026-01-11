@@ -115,7 +115,7 @@
             
             // --- UI Toggle State ---
             const [isScheduleExpanded, setIsScheduleExpanded] = useState(false);
-            const [isBanksExpanded, setIsBanksExpanded] = useState(false); // New: Toggle banks
+            const [isBanksExpanded, setIsBanksExpanded] = useState(false);
             const [collapsedBanks, setCollapsedBanks] = useState({});
             const [collapsedYears, setCollapsedYears] = useState({});
             const [expandedCardId, setExpandedCardId] = useState(null);
@@ -943,14 +943,14 @@
                                             <div>
                                                 <label className="text-sm font-bold text-gray-500 ml-1 mb-2 block">回饋設定</label>
                                                 {(formData.rewards||[]).map((r, i) => (
-                                                    <div key={i} className="flex gap-2 mb-3">
-                                                        <input value={r.name} onChange={e=>{const n=[...formData.rewards]; n[i].name=e.target.value; setFormData({...formData, rewards:n})}} className="flex-[2] bg-gray-50 p-3 rounded-xl border border-gray-100" placeholder="項目"/>
-                                                        <div className="relative w-20">
-                                                            <input type="number" value={r.rate} onChange={e=>{const n=[...formData.rewards]; n[i].rate=e.target.value; setFormData({...formData, rewards:n})}} className="w-full bg-gray-50 p-3 rounded-xl text-center border border-gray-100" placeholder="%"/>
-                                                            <span className="absolute right-2 top-3 text-gray-400 text-xs">%</span>
+                                                    <div key={i} className="flex items-center gap-2 mb-3">
+                                                        <input value={r.name} onChange={e=>{const n=[...formData.rewards]; n[i].name=e.target.value; setFormData({...formData, rewards:n})}} className="flex-1 min-w-0 bg-gray-50 p-3 rounded-xl border border-gray-100 text-sm" placeholder="項目"/>
+                                                        <div className="relative w-20 shrink-0">
+                                                            <input type="number" value={r.rate} onChange={e=>{const n=[...formData.rewards]; n[i].rate=e.target.value; setFormData({...formData, rewards:n})}} className="w-full bg-gray-50 p-3 pr-6 rounded-xl text-center border border-gray-100 text-sm" placeholder="%"/>
+                                                            <span className="absolute right-2 top-3.5 text-gray-400 text-xs">%</span>
                                                         </div>
-                                                        <input type="number" value={r.cap} onChange={e=>{const n=[...formData.rewards]; n[i].cap=e.target.value; setFormData({...formData, rewards:n})}} className="w-24 bg-gray-50 p-3 rounded-xl text-center border border-gray-100" placeholder="上限"/>
-                                                        <button onClick={()=>{const n=[...formData.rewards]; n.splice(i,1); setFormData({...formData, rewards:n})}} className="text-red-400 p-2"><X className="w-5 h-5"/></button>
+                                                        <input type="number" value={r.cap} onChange={e=>{const n=[...formData.rewards]; n[i].cap=e.target.value; setFormData({...formData, rewards:n})}} className="w-20 shrink-0 bg-gray-50 p-3 rounded-xl text-center border border-gray-100 text-sm" placeholder="上限"/>
+                                                        <button onClick={()=>{const n=[...formData.rewards]; n.splice(i,1); setFormData({...formData, rewards:n})}} className="shrink-0 text-red-400 p-2"><X className="w-5 h-5"/></button>
                                                     </div>
                                                 ))}
                                                 <button onClick={()=>setFormData({...formData, rewards:[...(formData.rewards||[]), {name:'',rate:'',cap:''}]})} className="w-full py-3 border border-dashed border-blue-300 rounded-xl text-blue-500 font-bold flex items-center justify-center gap-1"><Plus className="w-4 h-4"/> 新增回饋規則</button>
@@ -1051,4 +1051,3 @@
     </script>
 </body>
 </html>
-
