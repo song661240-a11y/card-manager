@@ -561,6 +561,7 @@
                                                     const maxCap = caps.length > 0 ? caps[caps.length-1] : 0;
                                                     const progress = maxCap > 0 ? Math.min((c.currentSpend / maxCap) * 100, 100) : 0;
                                                     const isOver = maxCap > 0 && c.currentSpend >= maxCap;
+                                                    const remaining = maxCap > 0 ? maxCap - c.currentSpend : null;
 
                                                     let bDay = c.billingDay;
                                                     if(c.bankId) { const b = banks.find(k => k.id === c.bankId); if(b) bDay = b.billingDay; }
@@ -593,8 +594,15 @@
                                                                     <button onClick={(e) => { e.stopPropagation(); setFormData(c); setTagInput((c.tags||[]).join(', ')); setModal({ type: 'editCard', data: c }); }} className="p-3 bg-gray-50 rounded-full active:bg-gray-200 transition"><Edit2 className="w-5 h-5 text-gray-500"/></button>
                                                                 </div>
                                                                 <div className="flex justify-between items-end mb-3 mt-4">
-                                                                    <div className="text-3xl font-bold text-gray-900 tracking-tight font-mono">${c.currentSpend.toLocaleString()}</div>
-                                                                    <div className="text-green-600 font-bold text-sm">+${r.total.toLocaleString()}</div>
+                                                                    <div className="flex flex-col">
+                                                                        <div className="text-3xl font-bold text-gray-900 tracking-tight font-mono">${c.currentSpend.toLocaleString()}</div>
+                                                                        {maxCap > 0 && (
+                                                                            <div className={`text-xs font-bold mt-0.5 ${remaining > 0 ? 'text-gray-400' : 'text-red-500'}`}>
+                                                                               {remaining > 0 ? `(剩 $${remaining.toLocaleString()})` : '(已達上限)'}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="text-green-600 font-bold text-sm pb-1">+${r.total.toLocaleString()}</div>
                                                                 </div>
                                                                 <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden mb-3">
                                                                     <div className={`h-full ${c.color}`} style={{ width: `${progress}%` }}></div>
